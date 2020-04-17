@@ -1,0 +1,5 @@
+data/
+results/
+saved_models/
+.DS_Store
+.pyc
