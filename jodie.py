@@ -9,8 +9,10 @@ import random
 
 import subprocess
 import numpy as np
+from tqdm import trange
 from collections import namedtuple
 from collections import defaultdict
+from sklearn.preprocessing import scale
 from sklearn.metrics import roc_auc_score
 
 import torch
@@ -19,7 +21,9 @@ from torch import optim
 from torch.autograd import Variable
 from torch.nn import functional as F
 
-def create_folders():
+dev = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+def create_folders(): # done
     commands = '''mkdir -p data/
                   mkdir -p results/
                   mkdir -p saved_models/
@@ -32,7 +36,7 @@ def create_folders():
         os.system(command.strip())
 
 
-def download_datasets():
+def download_datasets(): # done
     files = os.listdir("data")
 
     commands = '''wget http://snap.stanford.edu/jodie/reddit.csv -P data/
@@ -47,14 +51,13 @@ def download_datasets():
 
 def load_dataset(datapath, time_scaling=True):
     '''
-    load rows in format:
-    user, item, timestamp(cardinal), state_label, array_of_features
+    load rows of: user, item, timestamp(cardinal), state_label, array_of_features
     
-    State label = 1 whenever the user state changes, 0 otherwise.
-    If no state labels, use 0 as placeholder.
+    state label = 1 whenever the user state changes, 0 otherwise.
+    if no state labels, use 0 as placeholder.
 
-    Feature list can be as long as desired, should be at least 1-D
-    If there are no features, use 0 as placeholder. 
+    feature list can be as long as desired, should be at least 1-D
+    if no features, use 0 as placeholder.
     '''
 
     user_sequence = []
@@ -63,7 +66,7 @@ def load_dataset(datapath, time_scaling=True):
     label_sequence = []
     feature_sequence = []
     
-    print("\n\n**** Loading %s ****" % datapath))
+    print("\n\n**** Loading %s ****" % datapath)
     f = open(datapath,"r")
     f.readline() # header
     for cnt, l in enumerate(f):
@@ -72,8 +75,8 @@ def load_dataset(datapath, time_scaling=True):
         user_sequence.append(ls[0])
         item_sequence.append(ls[1])
         timestamp_sequence.append(float(ls[2])) 
-        label_sequence.append(int(ls[3])) # 1 at state change, 0 otherwise
-        feature_sequence.append(map(float,ls[4:]))
+        label_sequence.append(int(ls[3])) # 1 for state change, 0 otherwise
+        feature_sequence.append(list(map(float,ls[4:])))
     f.close()
 
     user_sequence = np.array(user_sequence) 
@@ -82,10 +85,10 @@ def load_dataset(datapath, time_scaling=True):
     timestamp_sequence -= timestamp_sequence[0]
 
     # print "Formating item sequence" 
-    nodeid = 0; item2id = {} # indexing, manually repeat DB's work
+    nodeid = 0; item2id = {} # indexing, manually perform DB's work
     item_timedifference_sequence = []
     item_current_timestamp = defaultdict(float) # just to use default 0.0
-    for timestamp, item_sequence in zip(item_sequence):
+    for timestamp, item in zip(timestamp_sequence, item_sequence):
         if item not in item2id:
             item2id[item] = nodeid; nodeid += 1
         item_timedifference_sequence.append(timestamp - item_current_timestamp[item])
@@ -116,7 +119,7 @@ def load_dataset(datapath, time_scaling=True):
 
     print("*** Network loading completed ***\n\n")
 
-    # too much return value... why bother dropping user_seq and item_seq, just return xx_id_seq?
+    # too much returned value... why bother dropping user_seq and item_seq, just return xx_id_seq?
     return [user2id, user_sequence_id, user_timedifference_sequence, user_previous_itemid_sequence, \
         item2id, item_sequence_id, item_timedifference_sequence, \
         timestamp_sequence, \
@@ -206,7 +209,7 @@ def save_model(model, optimizer, args, epoch, user_embeddings, item_embeddings, 
         state['user_embeddings_time_series'] = user_embeddings_time_series.data.cpu().numpy()
         state['item_embeddings_time_series'] = item_embeddings_time_series.data.cpu().numpy()
 
-    directory = os.path.join(path, 'saved_models/%s' % args.network)
+    directory = os.path.join(path, 'saved_models/%s' % args.task)
     if not os.path.exists(directory):
         os.makedirs(directory)
 
@@ -217,20 +220,19 @@ def save_model(model, optimizer, args, epoch, user_embeddings, item_embeddings, 
 
 def load_model(model, optimizer, args, epoch, path="./"):
     model_name = args.model
-    filename = path + "saved_models/%s/checkpoint.%s.ep%d.tp%.1f.pth.tar" % (args.network, model_name, epoch, args.train_proportion)
+    filename = path + "saved_models/%s/checkpoint.%s.ep%d.tp%.1f.pth.tar" % (args.task, model_name, epoch, args.train_proportion)
     checkpoint = torch.load(filename)
     print("Loading saved embeddings and model: %s" % filename)
-    args.start_epoch = checkpoint['epoch']
-    user_embeddings = Variable(torch.from_numpy(checkpoint['user_embeddings']).cuda())
-    item_embeddings = Variable(torch.from_numpy(checkpoint['item_embeddings']).cuda())
+    user_embeddings = Variable(torch.from_numpy(checkpoint['user_embeddings']).to(dev))
+    item_embeddings = Variable(torch.from_numpy(checkpoint['item_embeddings']).to(dev))
     try:
         train_end_idx = checkpoint['train_end_idx'] 
     except KeyError:
         train_end_idx = None
 
     try:
-        user_embeddings_time_series = Variable(torch.from_numpy(checkpoint['user_embeddings_time_series']).cuda())
-        item_embeddings_time_series = Variable(torch.from_numpy(checkpoint['item_embeddings_time_series']).cuda())
+        user_embeddings_time_series = Variable(torch.from_numpy(checkpoint['user_embeddings_time_series']).to(dev))
+        item_embeddings_time_series = Variable(torch.from_numpy(checkpoint['item_embeddings_time_series']).to(dev))
     except:
         user_embeddings_time_series = None
         item_embeddings_time_series = None
@@ -273,7 +275,7 @@ def reinitialize_tbatches():
 def calculate_state_prediction_loss(model, tbatch_interactionids, user_embeddings_time_series, y_true, loss_function):
     # PREDCIT THE LABEL FROM THE USER DYNAMIC EMBEDDINGS
     prob = model.predict_label(user_embeddings_time_series[tbatch_interactionids,:])
-    y = Variable(torch.LongTensor(y_true).cuda()[tbatch_interactionids])
+    y = Variable(torch.LongTensor(y_true).to(dev)[tbatch_interactionids])
     
     loss = loss_function(prob, y)
 
@@ -301,18 +303,17 @@ def set_embeddings_training_end(user_embeddings, item_embeddings, user_embedding
     item_embeddings.detach_()
 
 
-def train():
+def train(epoch_num):
     TrainArgs = namedtuple('TrainArgs',
-                ['data', 'model', 'epochs', 'embedding_dim', 
+                ['task', 'model', 'epochs', 'embedding_dim', 
                 'state_change', 'train_proportion', 'datapath'])
     # need train_proportion <= 0.8
-    args = TrainArgs('mooc', 'jodie', 50, 128, True, 0.8, '')
-    args.datapath = "data/%s.csv" % args.network
+    args = TrainArgs('mooc', 'jodie', epoch_num, 128, True, 0.8, 'data/mooc.csv')
 
     # LOAD DATA
     [user2id, user_sequence_id, user_timediffs_sequence, user_previous_itemid_sequence,
     item2id, item_sequence_id, item_timediffs_sequence, 
-    timestamp_sequence, feature_sequence, y_true] = load_dataset(args)
+    timestamp_sequence, feature_sequence, y_true] = load_dataset(args.datapath)
 
     num_interactions = len(user_sequence_id)
     num_users = len(user2id) 
@@ -322,7 +323,7 @@ def train():
 
     stats = (num_users, num_items, num_interactions, sum(y_true), len(y_true))
     print("*** Loaded network statistics: ***")
-    print("%d users\n  %d items\n  %d interactions\n  %d/%d state changes ***\n\n" % stats)
+    print("\n  %d users\n  %d items\n  %d interactions\n  %d/%d state changes ***\n\n" % stats)
 
     # SET TRAINING, VALIDATION, TESTING, and TBATCH BOUNDARIES
     train_end_idx = validation_start_idx = int(num_interactions * args.train_proportion) 
@@ -340,20 +341,20 @@ def train():
     tbatch_timespan = timestamp_sequence[-1] - timestamp_sequence[0] / 500 # like sliding window for ASR
 
     # INITIALIZE MODEL AND PARAMETERS
-    model = JODIE(args, num_features, num_users, num_items).cuda()
-    crossEntropyLoss = nn.CrossEntropyLoss(weight=torch.Tensor([1,true_labels_ratio]).cuda())
+    model = JODIE(args, num_features, num_users, num_items).to(dev)
+    crossEntropyLoss = nn.CrossEntropyLoss(weight=torch.Tensor([1,true_labels_ratio])).to(dev)
     MSELoss = nn.MSELoss()
 
     # INITIALIZE EMBEDDING
-    initial_user_embedding = nn.Parameter(F.normalize(torch.rand(args.embedding_dim).cuda(), dim=0))
-    initial_item_embedding = nn.Parameter(F.normalize(torch.rand(args.embedding_dim).cuda(), dim=0))
+    initial_user_embedding = nn.Parameter(F.normalize(torch.rand(args.embedding_dim).to(dev), dim=0))
+    initial_item_embedding = nn.Parameter(F.normalize(torch.rand(args.embedding_dim).to(dev), dim=0))
     model.initial_user_embedding = initial_user_embedding # shouldn't be called model.user_embedding = initial_user_embedding?
     model.initial_item_embedding = initial_item_embedding
 
     user_embeddings = initial_user_embedding.repeat(num_users, 1) # initialize all users to the same embedding 
     item_embeddings = initial_item_embedding.repeat(num_items, 1) # initialize all items to the same embedding
-    item_embedding_static = Variable(torch.eye(num_items).cuda()) # one-hot vectors for static embeddings
-    user_embedding_static = Variable(torch.eye(num_users).cuda()) # one-hot vectors for static embeddings 
+    item_embedding_static = Variable(torch.eye(num_items).to(dev)) # one-hot vectors for static embeddings
+    user_embedding_static = Variable(torch.eye(num_users).to(dev)) # one-hot vectors for static embeddings 
 
     # INITIALIZE MODEL
     optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
@@ -363,8 +364,8 @@ def train():
     for ep in range(args.epochs):
 
         # INITIALIZE EMBEDDING TRAJECTORY STORAGE
-        user_embeddings_timeseries = Variable(torch.Tensor(num_interactions, args.embedding_dim).cuda())
-        item_embeddings_timeseries = Variable(torch.Tensor(num_interactions, args.embedding_dim).cuda())
+        user_embeddings_timeseries = Variable(torch.Tensor(num_interactions, args.embedding_dim).to(dev))
+        item_embeddings_timeseries = Variable(torch.Tensor(num_interactions, args.embedding_dim).to(dev))
 
         optimizer.zero_grad()
         reinitialize_tbatches() #???
@@ -411,13 +412,13 @@ def train():
                     total_interaction_count += len(current_tbatches_interactionids[i])
 
                     # LOAD THE CURRENT TBATCH
-                    tbatch_userids = torch.LongTensor(current_tbatches_user[i]).cuda() # Recall "current_tbatches_user[i]" has unique elements
-                    tbatch_itemids = torch.LongTensor(current_tbatches_item[i]).cuda() # Recall "current_tbatches_item[i]" has unique elements
-                    tbatch_interactionids = torch.LongTensor(current_tbatches_interactionids[i]).cuda() 
-                    feature_tensor = Variable(torch.Tensor(current_tbatches_feature[i]).cuda()) # Recall "current_tbatches_feature[i]" is list of list, so "feature_tensor" is a 2-d tensor
-                    user_timediffs_tensor = Variable(torch.Tensor(current_tbatches_user_timediffs[i]).cuda()).unsqueeze(1)
-                    item_timediffs_tensor = Variable(torch.Tensor(current_tbatches_item_timediffs[i]).cuda()).unsqueeze(1)
-                    tbatch_itemids_previous = torch.LongTensor(current_tbatches_previous_item[i]).cuda()
+                    tbatch_userids = torch.LongTensor(current_tbatches_user[i]).to(dev) # Recall "current_tbatches_user[i]" has unique elements
+                    tbatch_itemids = torch.LongTensor(current_tbatches_item[i]).to(dev) # Recall "current_tbatches_item[i]" has unique elements
+                    tbatch_interactionids = torch.LongTensor(current_tbatches_interactionids[i]).to(dev) 
+                    feature_tensor = Variable(torch.Tensor(current_tbatches_feature[i])).to(dev) # Recall "current_tbatches_feature[i]" is list of list, so "feature_tensor" is a 2-d tensor
+                    user_timediffs_tensor = Variable(torch.Tensor(current_tbatches_user_timediffs[i])).to(dev).unsqueeze(1)
+                    item_timediffs_tensor = Variable(torch.Tensor(current_tbatches_item_timediffs[i])).to(dev).unsqueeze(1)
+                    tbatch_itemids_previous = torch.LongTensor(current_tbatches_previous_item[i]).to(dev)
                     item_embedding_previous = item_embeddings[tbatch_itemids_previous,:]
 
                     # PROJECT USER EMBEDDING TO CURRENT TIME
@@ -485,23 +486,21 @@ def train():
 def evaluate_state_change_prediction(epoch_id):
     # INITIALIZE PARAMETERS
     EvalArgs = namedtuple("EvalArgs",
-            ['network', 'model', 'epoch', 'embedding_dim',
+            ['task', 'model', 'epoch', 'embedding_dim',
             'train_proportion', 'state_change', 'datapath'])
     # Training sequence proportion cannot be greater than 0.8
     # No state change prediction for lastfm dataset
-    args = EvalArgs('mooc', 'jodie', 49, 128, 0.8, True, '')
-    args.datapath = "data/%s.csv" % args.network
-    args.epoch = epoch_id
+    args = EvalArgs('mooc', 'jodie', epoch_id, 128, 0.8, True, 'data/mooc.csv')
 
     # CHECK IF THE OUTPUT OF THE EPOCH IS ALREADY PROCESSED. IF SO, MOVE ON.
-    output_fname = "results/state_change_prediction_%s.txt" % args.network
+    output_fname = "results/state_change_prediction_%s.txt" % args.task
     if os.path.exists(output_fname):
         f = open(output_fname, "r")
         search_string = 'Test performance of epoch %d' % args.epoch
         for l in f:
             l = l.strip()
             if search_string in l:
-                print "Output file already has results of epoch %d" % args.epoch
+                print("Output file already has results of epoch %d" % args.epoch)
                 sys.exit(0)
         f.close()
 
@@ -510,13 +509,13 @@ def evaluate_state_change_prediction(epoch_id):
     item2id, item_sequence_id, item_timediffs_sequence, \
     timestamp_sequence, \
     feature_sequence, \
-    y_true] = load_network(args)
+    y_true] = load_dataset(args.datapath)
     num_interactions = len(user_sequence_id)
     num_features = len(feature_sequence[0])
     num_users = len(user2id)
     num_items = len(item2id) + 1
     true_labels_ratio = len(y_true)/(sum(y_true)+1)
-    print "*** Network statistics:\n  %d users\n  %d items\n  %d interactions\n  %d/%d true labels ***\n\n" % (num_users, num_items, num_interactions, sum(y_true), len(y_true))
+    print("*** Network statistics:\n  %d users\n  %d items\n  %d interactions\n  %d/%d true labels ***\n\n" % (num_users, num_items, num_interactions, sum(y_true), len(y_true)))
             
     # SET TRAIN, VALIDATION, AND TEST BOUNDARIES
     train_end_idx = validation_start_idx = int(num_interactions * args.train_proportion)
@@ -534,8 +533,8 @@ def evaluate_state_change_prediction(epoch_id):
     tbatch_timespan = timespan / 500 
 
     # INITIALIZE MODEL PARAMETERS
-    model = JODIE(args, num_features, num_users, num_items).cuda()
-    weight = torch.Tensor([1,true_labels_ratio]).cuda()
+    model = JODIE(args, num_features, num_users, num_items).to(dev)
+    weight = torch.Tensor([1,true_labels_ratio]).to(dev)
     crossEntropyLoss = nn.CrossEntropyLoss(weight=weight)
     MSELoss = nn.MSELoss()
 
@@ -581,7 +580,7 @@ def evaluate_state_change_prediction(epoch_id):
     tbatch_start_time = None
     loss = 0
     # FORWARD PASS
-    print "*** Making state change predictions by forward pass (no t-batching) ***"
+    print("*** Making state change predictions by forward pass (no t-batching) ***")
     with trange(train_end_idx, test_end_idx) as progress_bar:
         for j in progress_bar:
             progress_bar.set_description('%dth interaction for validation and testing' % j)
@@ -598,18 +597,19 @@ def evaluate_state_change_prediction(epoch_id):
             itemid_previous = user_previous_itemid_sequence[j]
 
             # LOAD USER AND ITEM EMBEDDING
-            user_embedding_input = user_embeddings[torch.cuda.LongTensor([userid])]
-            user_embedding_static_input = user_embeddings_static[torch.cuda.LongTensor([userid])]
-            item_embedding_input = item_embeddings[torch.cuda.LongTensor([itemid])]
-            item_embedding_static_input = item_embeddings_static[torch.cuda.LongTensor([itemid])]
-            feature_tensor = Variable(torch.Tensor(feature).cuda()).unsqueeze(0)
-            user_timediffs_tensor = Variable(torch.Tensor([user_timediff]).cuda()).unsqueeze(0)
-            item_timediffs_tensor = Variable(torch.Tensor([item_timediff]).cuda()).unsqueeze(0)
-            item_embedding_previous = item_embeddings[torch.cuda.LongTensor([itemid_previous])]
+            dtype = torch.cuda.LongTensor if torch.cuda.is_available() else torch.LongTensor
+            user_embedding_input = user_embeddings[dtype([userid])]
+            user_embedding_static_input = user_embeddings_static[dtype([userid])]
+            item_embedding_input = item_embeddings[dtype([itemid])]
+            item_embedding_static_input = item_embeddings_static[dtype([itemid])]
+            feature_tensor = Variable(torch.Tensor(feature).to(dev)).unsqueeze(0)
+            user_timediffs_tensor = Variable(torch.Tensor([user_timediff]).to(dev)).unsqueeze(0)
+            item_timediffs_tensor = Variable(torch.Tensor([item_timediff]).to(dev)).unsqueeze(0)
+            item_embedding_previous = item_embeddings[dtype([itemid_previous])]
 
             # PROJECT USER EMBEDDING
             user_projected_embedding = model.forward(user_embedding_input, item_embedding_previous, timediffs=user_timediffs_tensor, features=feature_tensor, select='project')
-            user_item_embedding = torch.cat([user_projected_embedding, item_embedding_previous, item_embeddings_static[torch.cuda.LongTensor([itemid_previous])], user_embedding_static_input], dim=1)
+            user_item_embedding = torch.cat([user_projected_embedding, item_embedding_previous, item_embeddings_static[dtype([itemid_previous])], user_embedding_static_input], dim=1)
             
             # PREDICT ITEM EMBEDDING
             predicted_item_embedding = model.predict_item_embedding(user_item_embedding)
@@ -675,14 +675,14 @@ def evaluate_state_change_prediction(epoch_id):
     fw = open(output_fname, "a")
     metrics = ['AUC']
 
-    print '\n\n*** Validation performance of epoch %d ***' % args.epoch
+    print('\n\n*** Validation performance of epoch %d ***' % args.epoch)
     fw.write('\n\n*** Validation performance of epoch %d ***\n' % args.epoch)
 
     for i in xrange(len(metrics)):
         print(metrics[i] + ': ' + str(performance_dict['validation'][i]))
         fw.write("Validation: " + metrics[i] + ': ' + str(performance_dict['validation'][i]) + "\n")
 
-    print '\n\n*** Test performance of epoch %d ***' % args.epoch
+    print('\n\n*** Test performance of epoch %d ***' % args.epoch)
     fw.write('\n\n*** Test performance of epoch %d ***\n' % args.epoch)
     for i in xrange(len(metrics)):
         print(metrics[i] + ': ' + str(performance_dict['test'][i]))
@@ -725,14 +725,14 @@ def report_performance(fname='results/interaction_prediction_mooc.txt'):
     else:
         metrics = ['AUC']
 
-    print '\n\n*** For file: %s ***' % fname
+    print('\n\n*** For file: %s ***' % fname)
     best_val_idx = np.argmax(validation_performances[:,1])
-    print "Best validation epoch: %d" % best_val_idx
-    print '\n\n*** Best validation performance (epoch %d) ***' % best_val_idx
+    print("Best validation epoch: %d" % best_val_idx)
+    print('\n\n*** Best validation performance (epoch %d) ***' % best_val_idx)
     for i in xrange(len(metrics)):
         print(metrics[i] + ': ' + str(validation_performances[best_val_idx][i+1]))
 
-    print '\n\n*** Final model performance on the test set, i.e., in epoch %d ***' % best_val_idx
+    print('\n\n*** Final model performance on the test set, i.e., in epoch %d ***' % best_val_idx)
     for i in xrange(len(metrics)):
         print(metrics[i] + ': ' + str(test_performances[best_val_idx][i+1]))
 
@@ -740,7 +740,8 @@ def report_performance(fname='results/interaction_prediction_mooc.txt'):
 if __name__ == '__main__':
     create_folders()
     download_datasets()
-    train()
-    for i in range(50): # hard-coded epoch num
+    epoch_num = 1
+    train(epoch_num)
+    for i in range(epoch_num):
         evaluate_state_change_prediction(i)
     report_performance()

@@ -20,8 +20,7 @@ https://github.com/wzfhaha/dropout_prediction
 import pandas as pd
 
 # it's just parsed&joint json user logs
-test_log = pd.read_csv("./test_log.csv")
-test_log
+# test_log = pd.read_csv("./test_log.csv")
 
 # extract feature from web log, actually it's just activity type based counting
 
