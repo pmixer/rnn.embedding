@@ -689,13 +689,13 @@ def evaluate_state_change_prediction(epoch_id):
     print('\n\n*** Validation performance of epoch %d ***' % args.epoch)
     fw.write('\n\n*** Validation performance of epoch %d ***\n' % args.epoch)
 
-    for i in xrange(len(metrics)):
+    for i in range(len(metrics)):
         print(metrics[i] + ': ' + str(performance_dict['validation'][i]))
         fw.write("Validation: " + metrics[i] + ': ' + str(performance_dict['validation'][i]) + "\n")
 
     print('\n\n*** Test performance of epoch %d ***' % args.epoch)
     fw.write('\n\n*** Test performance of epoch %d ***\n' % args.epoch)
-    for i in xrange(len(metrics)):
+    for i in range(len(metrics)):
         print(metrics[i] + ': ' + str(performance_dict['test'][i]))
         fw.write("Test: " + metrics[i] + ': ' + str(performance_dict['test'][i]) + "\n")
 
@@ -740,11 +740,11 @@ def report_performance(fname='results/interaction_prediction_mooc.txt'):
     best_val_idx = np.argmax(validation_performances[:,1])
     print("Best validation epoch: %d" % best_val_idx)
     print('\n\n*** Best validation performance (epoch %d) ***' % best_val_idx)
-    for i in xrange(len(metrics)):
+    for i in range(len(metrics)):
         print(metrics[i] + ': ' + str(validation_performances[best_val_idx][i+1]))
 
     print('\n\n*** Final model performance on the test set, i.e., in epoch %d ***' % best_val_idx)
-    for i in xrange(len(metrics)):
+    for i in range(len(metrics)):
         print(metrics[i] + ': ' + str(test_performances[best_val_idx][i+1]))
 
 
@@ -758,5 +758,3 @@ if __name__ == '__main__':
     # for i in range(epoch_num):
     evaluate_state_change_prediction(epoch_num-1)
     report_performance()
-
-    
