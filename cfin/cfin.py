@@ -490,11 +490,9 @@ class CFIN():
                 self.valid_result.append(valid_result)
             if self.verbose > 0 and epoch % self.verbose == 0:
                 if has_valid:
-                    print("[%d] train-result=%.4f, valid-result=%.4f, valid-f1=%.4f [%.1f s]"
-#                         % (epoch + 1, train_result, valid_result, valid_f1, time() - t1))
+                    print("[%d] train-result=%.4f, valid-result=%.4f, valid-f1=%.4f [%.1f s]" % (epoch + 1, train_result, valid_result, valid_f1, time() - t1))
                 else:
-                    print("[%d] train-result=%.4f [%.1f s]"
-#                         % (epoch + 1, train_result, time() - t1))
+                    print("[%d] train-result=%.4f [%.1f s]" % (epoch + 1, train_result, time() - t1))
             
             if has_valid and early_stopping and self.training_termination(self.valid_result, early_stopping_round):
                 best_epoch = epoch - early_stopping_round + 1
@@ -761,7 +759,7 @@ def model_run(dfTrain_u, dfTest_u, dfTrain_c, dfTest_c, dfTrain_a, dfTest_a, par
     """ 
     # prediction results on test set
     
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     # model.fit(ui_train, uv_train, ci_train, cv_train, ai_train, av_train, y_train, ui_test, uv_test, ci_test, cv_test, ai_test, av_test, y_test, early_stopping=False)
     model.saver.restore(model.sess, '../model/CFIN')
     model.evaluate(ui_test, uv_test, ci_test, cv_test, ai_test, av_test, y_test)   

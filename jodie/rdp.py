@@ -302,6 +302,7 @@ def set_embeddings_training_end(user_embeddings, item_embeddings, user_embedding
     user_embeddings.detach_()
     item_embeddings.detach_()
 
+tbatch_sizes = []
 
 def train(epoch_num):
     TrainArgs = namedtuple('TrainArgs',
@@ -338,7 +339,7 @@ def train(epoch_num):
     Longer timespans mean more interactions are processed and the training time is reduced, 
     however it requires more GPU memory. Longer timespan leads to less frequent model updates. 
     ''' # batching in time dimension is a cool idea.
-    tbatch_timespan = timestamp_sequence[-1] - timestamp_sequence[0] / 500 # like sliding window for ASR
+    tbatch_timespan = (timestamp_sequence[-1] - timestamp_sequence[0]) / 500 # like sliding window for ASR
 
     # INITIALIZE MODEL AND PARAMETERS
     model = JODIE(args, num_features, num_users, num_items).to(dev)
@@ -408,7 +409,6 @@ def train(epoch_num):
 
                 # ITERATE OVER ALL T-BATCHES
                 for i in range(len(current_tbatches_user)):
-                        
                     total_interaction_count += len(current_tbatches_interactionids[i])
 
                     # LOAD THE CURRENT TBATCH
@@ -423,6 +423,9 @@ def train(epoch_num):
 
                     # PROJECT USER EMBEDDING TO CURRENT TIME
                     user_embedding_input = user_embeddings[tbatch_userids,:]
+                    print("tbatch size: " + str(len(tbatch_userids)))
+                    tbatch_sizes.append(tbatch_userids)
+
                     user_projected_embedding = model.forward(user_embedding_input, item_embedding_previous, timediffs=user_timediffs_tensor, features=feature_tensor, select='project')
                     user_item_embedding = torch.cat([user_projected_embedding, item_embedding_previous, item_embedding_static[tbatch_itemids_previous,:], user_embedding_static[tbatch_userids,:]], dim=1)
 
@@ -473,7 +476,7 @@ def train(epoch_num):
         item_embeddings_dystat = torch.cat([item_embeddings, item_embedding_static], dim=1)
         user_embeddings_dystat = torch.cat([user_embeddings, user_embedding_static], dim=1)
         # SAVE CURRENT MODEL TO DISK TO BE USED IN EVALUATION.
-        save_model(model, optimizer, args, ep, user_embeddings_dystat, item_embeddings_dystat, train_end_idx, user_embeddings_timeseries, item_embeddings_timeseries)
+        # save_model(model, optimizer, args, ep, user_embeddings_dystat, item_embeddings_dystat, train_end_idx, user_embeddings_timeseries, item_embeddings_timeseries)
 
         user_embeddings = initial_user_embedding.repeat(num_users, 1)
         item_embeddings = initial_item_embedding.repeat(num_items, 1)
@@ -742,6 +745,10 @@ if __name__ == '__main__':
     download_datasets()
     epoch_num = 1
     train(epoch_num)
-    for i in range(epoch_num):
-        evaluate_state_change_prediction(i)
+    print("tbatch size log")
+    print(tbatch_sizes)
+    # for i in range(epoch_num):
+    evaluate_state_change_prediction(epoch_num-1)
     report_performance()
+
+    
