@@ -304,7 +304,6 @@ def set_embeddings_training_end(user_embeddings, item_embeddings, user_embedding
     user_embeddings.detach_()
     item_embeddings.detach_()
 
-tbatch_sizes = []
 
 def train(epoch_num):
     TrainArgs = namedtuple('TrainArgs',
@@ -425,8 +424,7 @@ def train(epoch_num):
 
                     # PROJECT USER EMBEDDING TO CURRENT TIME
                     user_embedding_input = user_embeddings[tbatch_userids,:]
-                    tbsz = len(tbatch_userids); print("tbatch size: " + str(tbsz))
-                    tbatch_sizes.append(tbsz)
+                    tbsz = len(tbatch_userids)
 
                     for g in optimizer.param_groups:
                         g['lr'] = g['lr'] * tbsz
@@ -504,7 +502,7 @@ def evaluate_state_change_prediction(epoch_id):
     args = EvalArgs('mooc', 'jodie', epoch_id, 128, 0.8, True, 'data/mooc.csv')
 
     # CHECK IF THE OUTPUT OF THE EPOCH IS ALREADY PROCESSED. IF SO, MOVE ON.
-    output_fname = "results/state_change_prediction_%s.txt" % args.task
+    output_fname = "results/state_change_prediction_%s_%s.txt" % (args.task, args.model)
     if os.path.exists(output_fname):
         f = open(output_fname, "r")
         search_string = 'Test performance of epoch %d' % args.epoch
@@ -751,10 +749,8 @@ def report_performance(fname='results/interaction_prediction_mooc.txt'):
 if __name__ == '__main__':
     create_folders()
     download_datasets()
-    epoch_num = 50
+    epoch_num = 10
     train(epoch_num)
-    print("tbatch size log")
-    print(tbatch_sizes)
     # for i in range(epoch_num):
     evaluate_state_change_prediction(epoch_num-1)
-    report_performance()
+    # report_performance()

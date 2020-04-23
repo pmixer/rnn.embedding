@@ -497,7 +497,7 @@ def evaluate_state_change_prediction(epoch_id):
     args = EvalArgs('mooc', 'jodie', epoch_id, 128, 0.8, True, 'data/mooc.csv')
 
     # CHECK IF THE OUTPUT OF THE EPOCH IS ALREADY PROCESSED. IF SO, MOVE ON.
-    output_fname = "results/state_change_prediction_%s.txt" % args.task
+    output_fname = "results/state_change_prediction_%s_%s.txt" % (args.task, args.model)
     if os.path.exists(output_fname):
         f = open(output_fname, "r")
         search_string = 'Test performance of epoch %d' % args.epoch
@@ -744,8 +744,8 @@ def report_performance(fname='results/interaction_prediction_mooc.txt'):
 if __name__ == '__main__':
     create_folders()
     download_datasets()
-    epoch_num = 1
+    epoch_num = 10
     train(epoch_num)
     # for i in range(epoch_num):
     evaluate_state_change_prediction(epoch_num-1)
-    report_performance()
+    # report_performance()
