@@ -39,10 +39,12 @@ def create_folders(): # done
 def download_datasets(): # done
     files = os.listdir("data")
 
-    commands = '''wget http://snap.stanford.edu/jodie/reddit.csv -P data/
-                  wget http://snap.stanford.edu/jodie/wikipedia.csv -P data/
-                  wget http://snap.stanford.edu/jodie/mooc.csv -P data/
-                  wget http://snap.stanford.edu/jodie/lastfm.csv -P data/'''
+    commands = '''wget http://snap.stanford.edu/jodie/mooc.csv -P data/'''
+
+                # '''wget http://snap.stanford.edu/jodie/reddit.csv -P data/
+                #   wget http://snap.stanford.edu/jodie/wikipedia.csv -P data/
+                #   wget http://snap.stanford.edu/jodie/mooc.csv -P data/
+                #   wget http://snap.stanford.edu/jodie/lastfm.csv -P data/'''
 
     for command in commands.split('\n'): # bit ugly dataset name extractor
         f = command[command.find("jodie")+6:command.find(".csv")+4]
@@ -154,8 +156,8 @@ class JODIE(nn.Module):
         rnn_input_size_items = rnn_input_size_users = self.embedding_dim + 1 + num_features
 
         # print("Initializing user and item RNNs")
-        self.item_rnn = nn.RNNCell(rnn_input_size_users, self.embedding_dim)
-        self.user_rnn = nn.RNNCell(rnn_input_size_items, self.embedding_dim)
+        self.item_rnn = nn.GRUCell(rnn_input_size_users, self.embedding_dim)
+        self.user_rnn = nn.GRUCell(rnn_input_size_items, self.embedding_dim)
 
         # print("Initializing linear layers")
         self.linear_layer1 = nn.Linear(self.embedding_dim, 50)
@@ -423,8 +425,11 @@ def train(epoch_num):
 
                     # PROJECT USER EMBEDDING TO CURRENT TIME
                     user_embedding_input = user_embeddings[tbatch_userids,:]
-                    print("tbatch size: " + str(len(tbatch_userids)))
-                    tbatch_sizes.append(tbatch_userids)
+                    tbsz = len(tbatch_userids); print("tbatch size: " + str(tbsz))
+                    tbatch_sizes.append(tbsz)
+
+                    for g in optimizer.param_groups:
+                        g['lr'] = g['lr'] * tbsz
 
                     user_projected_embedding = model.forward(user_embedding_input, item_embedding_previous, timediffs=user_timediffs_tensor, features=feature_tensor, select='project')
                     user_item_embedding = torch.cat([user_projected_embedding, item_embedding_previous, item_embedding_static[tbatch_itemids_previous,:], user_embedding_static[tbatch_userids,:]], dim=1)
@@ -449,10 +454,13 @@ def train(epoch_num):
                     # CALCULATE LOSS TO MAINTAIN TEMPORAL SMOOTHNESS
                     loss += MSELoss(item_embedding_output, item_embedding_input.detach())
                     loss += MSELoss(user_embedding_output, user_embedding_input.detach())
-
+                    # print("current loss: " + str(loss))
                     # CALCULATE STATE CHANGE LOSS
                     if args.state_change:
                         loss += calculate_state_prediction_loss(model, tbatch_interactionids, user_embeddings_timeseries, y_true, crossEntropyLoss) 
+
+                    for g in optimizer.param_groups:
+                        g['lr'] = g['lr'] / tbsz
 
                 # BACKPROPAGATE ERROR AFTER END OF T-BATCH
                 total_loss += loss.item()
@@ -584,84 +592,84 @@ def evaluate_state_change_prediction(epoch_id):
     loss = 0
     # FORWARD PASS
     print("*** Making state change predictions by forward pass (no t-batching) ***")
-    with trange(train_end_idx, test_end_idx) as progress_bar:
-        for j in progress_bar:
+    for j in range(train_end_idx, test_end_idx):
+        if j % 10000 == 0:
             progress_bar.set_description('%dth interaction for validation and testing' % j)
 
-            # LOAD INTERACTION J
-            userid = user_sequence_id[j]
-            itemid = item_sequence_id[j]
-            feature = feature_sequence[j]
-            user_timediff = user_timediffs_sequence[j]
-            item_timediff = item_timediffs_sequence[j]
-            timestamp = timestamp_sequence[j]
-            if not tbatch_start_time:
-                tbatch_start_time = timestamp
-            itemid_previous = user_previous_itemid_sequence[j]
+        # LOAD INTERACTION J
+        userid = user_sequence_id[j]
+        itemid = item_sequence_id[j]
+        feature = feature_sequence[j]
+        user_timediff = user_timediffs_sequence[j]
+        item_timediff = item_timediffs_sequence[j]
+        timestamp = timestamp_sequence[j]
+        if not tbatch_start_time:
+            tbatch_start_time = timestamp
+        itemid_previous = user_previous_itemid_sequence[j]
 
-            # LOAD USER AND ITEM EMBEDDING
-            dtype = torch.cuda.LongTensor if torch.cuda.is_available() else torch.LongTensor
-            user_embedding_input = user_embeddings[dtype([userid])]
-            user_embedding_static_input = user_embeddings_static[dtype([userid])]
-            item_embedding_input = item_embeddings[dtype([itemid])]
-            item_embedding_static_input = item_embeddings_static[dtype([itemid])]
-            feature_tensor = Variable(torch.Tensor(feature).to(dev)).unsqueeze(0)
-            user_timediffs_tensor = Variable(torch.Tensor([user_timediff]).to(dev)).unsqueeze(0)
-            item_timediffs_tensor = Variable(torch.Tensor([item_timediff]).to(dev)).unsqueeze(0)
-            item_embedding_previous = item_embeddings[dtype([itemid_previous])]
+        # LOAD USER AND ITEM EMBEDDING
+        dtype = torch.cuda.LongTensor if torch.cuda.is_available() else torch.LongTensor
+        user_embedding_input = user_embeddings[dtype([userid])]
+        user_embedding_static_input = user_embeddings_static[dtype([userid])]
+        item_embedding_input = item_embeddings[dtype([itemid])]
+        item_embedding_static_input = item_embeddings_static[dtype([itemid])]
+        feature_tensor = Variable(torch.Tensor(feature).to(dev)).unsqueeze(0)
+        user_timediffs_tensor = Variable(torch.Tensor([user_timediff]).to(dev)).unsqueeze(0)
+        item_timediffs_tensor = Variable(torch.Tensor([item_timediff]).to(dev)).unsqueeze(0)
+        item_embedding_previous = item_embeddings[dtype([itemid_previous])]
 
-            # PROJECT USER EMBEDDING
-            user_projected_embedding = model.forward(user_embedding_input, item_embedding_previous, timediffs=user_timediffs_tensor, features=feature_tensor, select='project')
-            user_item_embedding = torch.cat([user_projected_embedding, item_embedding_previous, item_embeddings_static[dtype([itemid_previous])], user_embedding_static_input], dim=1)
+        # PROJECT USER EMBEDDING
+        user_projected_embedding = model.forward(user_embedding_input, item_embedding_previous, timediffs=user_timediffs_tensor, features=feature_tensor, select='project')
+        user_item_embedding = torch.cat([user_projected_embedding, item_embedding_previous, item_embeddings_static[dtype([itemid_previous])], user_embedding_static_input], dim=1)
+        
+        # PREDICT ITEM EMBEDDING
+        predicted_item_embedding = model.predict_item_embedding(user_item_embedding)
+
+        # CALCULATE PREDICTION LOSS
+        loss += MSELoss(predicted_item_embedding, torch.cat([item_embedding_input, item_embedding_static_input], dim=1).detach())
+
+        # UPDATE USER AND ITEM EMBEDDING
+        user_embedding_output = model.forward(user_embedding_input, item_embedding_input, timediffs=user_timediffs_tensor, features=feature_tensor, select='user_update') 
+        item_embedding_output = model.forward(user_embedding_input, item_embedding_input, timediffs=item_timediffs_tensor, features=feature_tensor, select='item_update') 
+
+        # SAVE EMBEDDINGS
+        item_embeddings[itemid,:] = item_embedding_output.squeeze(0) 
+        user_embeddings[userid,:] = user_embedding_output.squeeze(0) 
+        user_embeddings_timeseries[j, :] = user_embedding_output.squeeze(0)
+        item_embeddings_timeseries[j, :] = item_embedding_output.squeeze(0)
+
+        # CALCULATE LOSS TO MAINTAIN TEMPORAL SMOOTHNESS
+        loss += MSELoss(item_embedding_output, item_embedding_input.detach())
+        loss += MSELoss(user_embedding_output, user_embedding_input.detach())
+
+        # CALCULATE STATE CHANGE LOSS
+        if args.state_change:
+            loss += calculate_state_prediction_loss(model, [j], user_embeddings_timeseries, y_true, crossEntropyLoss) 
+
+        # UPDATE THE MODEL IN REAL-TIME USING ERRORS MADE IN THE PAST PREDICTION
+        if timestamp - tbatch_start_time > tbatch_timespan:
+            tbatch_start_time = timestamp
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
             
-            # PREDICT ITEM EMBEDDING
-            predicted_item_embedding = model.predict_item_embedding(user_item_embedding)
+            # RESET LOSS FOR NEXT T-BATCH
+            loss = 0
+            item_embeddings.detach_()
+            user_embeddings.detach_()
+            item_embeddings_timeseries.detach_() 
+            user_embeddings_timeseries.detach_() 
 
-            # CALCULATE PREDICTION LOSS
-            loss += MSELoss(predicted_item_embedding, torch.cat([item_embedding_input, item_embedding_static_input], dim=1).detach())
+        # PREDICT THE LABEL FROM THE USER DYNAMIC EMBEDDINGS
+        prob = model.predict_label(user_embedding_output)
 
-            # UPDATE USER AND ITEM EMBEDDING
-            user_embedding_output = model.forward(user_embedding_input, item_embedding_input, timediffs=user_timediffs_tensor, features=feature_tensor, select='user_update') 
-            item_embedding_output = model.forward(user_embedding_input, item_embedding_input, timediffs=item_timediffs_tensor, features=feature_tensor, select='item_update') 
-
-            # SAVE EMBEDDINGS
-            item_embeddings[itemid,:] = item_embedding_output.squeeze(0) 
-            user_embeddings[userid,:] = user_embedding_output.squeeze(0) 
-            user_embeddings_timeseries[j, :] = user_embedding_output.squeeze(0)
-            item_embeddings_timeseries[j, :] = item_embedding_output.squeeze(0)
-
-            # CALCULATE LOSS TO MAINTAIN TEMPORAL SMOOTHNESS
-            loss += MSELoss(item_embedding_output, item_embedding_input.detach())
-            loss += MSELoss(user_embedding_output, user_embedding_input.detach())
-
-            # CALCULATE STATE CHANGE LOSS
-            if args.state_change:
-                loss += calculate_state_prediction_loss(model, [j], user_embeddings_timeseries, y_true, crossEntropyLoss) 
-
-            # UPDATE THE MODEL IN REAL-TIME USING ERRORS MADE IN THE PAST PREDICTION
-            if timestamp - tbatch_start_time > tbatch_timespan:
-                tbatch_start_time = timestamp
-                loss.backward()
-                optimizer.step()
-                optimizer.zero_grad()
-                
-                # RESET LOSS FOR NEXT T-BATCH
-                loss = 0
-                item_embeddings.detach_()
-                user_embeddings.detach_()
-                item_embeddings_timeseries.detach_() 
-                user_embeddings_timeseries.detach_() 
-
-            # PREDICT THE LABEL FROM THE USER DYNAMIC EMBEDDINGS
-            prob = model.predict_label(user_embedding_output)
-
-            # ADD PREDICTION TO VALIDATION OR TEST ARRAYS
-            if j < test_start_idx:
-                validation_predicted_y.extend(prob.data.cpu().numpy())
-                validation_true_y.extend([y_true[j]])
-            else:
-                test_predicted_y.extend(prob.data.cpu().numpy())
-                test_true_y.extend([y_true[j]])
+        # ADD PREDICTION TO VALIDATION OR TEST ARRAYS
+        if j < test_start_idx:
+            validation_predicted_y.extend(prob.data.cpu().numpy())
+            validation_true_y.extend([y_true[j]])
+        else:
+            test_predicted_y.extend(prob.data.cpu().numpy())
+            test_true_y.extend([y_true[j]])
 
     # CALCULATE THE PERFORMANCE METRICS
     validation_predicted_y = np.array(validation_predicted_y)
@@ -743,7 +751,7 @@ def report_performance(fname='results/interaction_prediction_mooc.txt'):
 if __name__ == '__main__':
     create_folders()
     download_datasets()
-    epoch_num = 1
+    epoch_num = 50
     train(epoch_num)
     print("tbatch size log")
     print(tbatch_sizes)
