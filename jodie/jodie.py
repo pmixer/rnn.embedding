@@ -346,6 +346,7 @@ def train(epoch_num, from_epoch=-1):
     model = JODIE(args, num_features, num_users, num_items).to(dev)
     crossEntropyLoss = nn.CrossEntropyLoss(weight=torch.Tensor([1,true_labels_ratio])).to(dev)
     MSELoss = nn.MSELoss()
+    optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
 
     # INITIALIZE EMBEDDING
     initial_user_embedding = nn.Parameter(F.normalize(torch.rand(args.embedding_dim).to(dev), dim=0))
@@ -353,20 +354,20 @@ def train(epoch_num, from_epoch=-1):
     model.initial_user_embedding = initial_user_embedding # shouldn't be called model.user_embedding = initial_user_embedding?
     model.initial_item_embedding = initial_item_embedding
 
-    user_embeddings = initial_user_embedding.repeat(num_users, 1) # initialize all users to the same embedding 
-    item_embeddings = initial_item_embedding.repeat(num_items, 1) # initialize all items to the same embedding
+    if from_epoch >= 0:
+        model, optimizer, user_embeddings_dystat, item_embeddings_dystat, user_embeddings_timeseries, item_embeddings_timeseries, train_end_idx_training = load_model(model, optimizer, args, from_epoch)
+        user_embeddings = torch.split(user_embeddings_dystat, args.embedding_dim, dim=1)[0].clone()
+        item_embeddings = torch.split(item_embeddings_dystat, args.embedding_dim, dim=1)[0].clone()
+
     item_embedding_static = Variable(torch.eye(num_items).to(dev)) # one-hot vectors for static embeddings
     user_embedding_static = Variable(torch.eye(num_users).to(dev)) # one-hot vectors for static embeddings 
 
-    # INITIALIZE MODEL
-    optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
-
-    # if from_epoch >= 0:
-        # model, optimizer, user_embeddings_dystat, item_embeddings_dystat, user_embeddings_timeseries, item_embeddings_timeseries, train_end_idx_training = load_model(model, optimizer, args, from_epoch)
-
     # TRAIN MODEL
-    print("*** Training the %s model from epoch %d  to epoch %d***" % (args.model, from_epoch, args.epochs))
+    print("*** Training %s model from epoch %d  to epoch %d(epoch id >= 0)***" % (args.model, from_epoch, args.epochs-1))
     for ep in range(from_epoch+1, args.epochs):
+
+        user_embeddings = initial_user_embedding.repeat(num_users, 1) # initialize all users to the same embedding
+        item_embeddings = initial_item_embedding.repeat(num_items, 1) # initialize all items to the same embedding
 
         # INITIALIZE EMBEDDING TRAJECTORY STORAGE
         user_embeddings_timeseries = Variable(torch.Tensor(num_interactions, args.embedding_dim).to(dev))
@@ -477,17 +478,10 @@ def train(epoch_num, from_epoch=-1):
 
         # END OF ONE EPOCH 
         print("\n\nTotal loss in this epoch = %f" % total_loss)
-        item_embeddings_dystat = torch.cat([item_embeddings, item_embedding_static], dim=1)
-        user_embeddings_dystat = torch.cat([user_embeddings, user_embedding_static], dim=1)
-        # SAVE CURRENT MODEL TO DISK TO BE USED IN EVALUATION.
-        # save_model(model, optimizer, args, ep, user_embeddings_dystat, item_embeddings_dystat, train_end_idx, user_embeddings_timeseries, item_embeddings_timeseries)
-
-        user_embeddings = initial_user_embedding.repeat(num_users, 1)
-        item_embeddings = initial_item_embedding.repeat(num_items, 1)
 
     # END OF ALL EPOCHS. SAVE FINAL MODEL DISK TO BE USED IN EVALUATION.
     print("\n\n*** Training complete. Saving final model. ***\n\n")
-    save_model(model, optimizer, args, ep, user_embeddings_dystat, item_embeddings_dystat, train_end_idx, user_embeddings_timeseries, item_embeddings_timeseries)
+    save_model(model, optimizer, args, ep, user_embeddings, item_embeddings, train_end_idx, user_embeddings_timeseries, item_embeddings_timeseries)
 
 
 def evaluate_state_change_prediction(epoch_id):
@@ -559,15 +553,10 @@ def evaluate_state_change_prediction(epoch_id):
     set_embeddings_training_end(user_embeddings_dystat, item_embeddings_dystat, user_embeddings_timeseries, item_embeddings_timeseries, user_sequence_id, item_sequence_id, train_end_idx) 
 
     # LOAD THE EMBEDDINGS: DYNAMIC AND STATIC
-    item_embeddings = item_embeddings_dystat[:, :args.embedding_dim]
-    item_embeddings = item_embeddings.clone()
-    item_embeddings_static = item_embeddings_dystat[:, args.embedding_dim:]
-    item_embeddings_static = item_embeddings_static.clone()
-
-    user_embeddings = user_embeddings_dystat[:, :args.embedding_dim]
-    user_embeddings = user_embeddings.clone()
-    user_embeddings_static = user_embeddings_dystat[:, args.embedding_dim:]
-    user_embeddings_static = user_embeddings_static.clone()
+    item_embeddings_static = Variable(torch.eye(num_items).to(dev)) # one-hot vectors for static embeddings
+    user_embeddings_static = Variable(torch.eye(num_users).to(dev)) # one-hot vectors for static embeddings 
+    item_embeddings = torch.split(item_embeddings_dystat, args.embedding_dim, dim=1)[0].clone()
+    user_embeddings = torch.split(user_embeddings_dystat, args.embedding_dim, dim=1)[0].clone()
 
     validation_predicted_y = []
     test_predicted_y = []
@@ -701,7 +690,7 @@ def evaluate_state_change_prediction(epoch_id):
 if __name__ == '__main__':
     create_folders()
     download_datasets()
-    epoch_num = 50
-    train(epoch_num) # from_epoch=9)
+    epoch_num = 10
+    train(epoch_num)
     # for i in range(epoch_num):
     evaluate_state_change_prediction(epoch_num-1)
