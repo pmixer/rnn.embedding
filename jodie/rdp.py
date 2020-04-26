@@ -1,5 +1,11 @@
 '''
-Train the JODIE model on given dataset for dropout prediction:
+just run rdp on XuetangX dataset, report epoch 10 res for jodie/rdp compairson on minimal dataset
+switch static embedding to profile based one
+allow both portion and time spliation for train/val/test
+transfer dropout prediction from status to interaction stats(with projection)
+combine absolute time and time from course-start/first-interaction
+improve time as feature's usage, seems currently just concat with static and dynamic feature
+double-check t-batch aware learning rate implementation
 '''
 import os
 import csv
@@ -9,7 +15,6 @@ import random
 
 import subprocess
 import numpy as np
-from tqdm import trange
 from collections import namedtuple
 from collections import defaultdict
 from sklearn.preprocessing import scale
@@ -21,7 +26,7 @@ from torch import optim
 from torch.autograd import Variable
 from torch.nn import functional as F
 
-dev = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+dev = torch.device('cuda:4' if torch.cuda.is_available() else 'cpu')
 
 def create_folders(): # done
     commands = '''mkdir -p data/
@@ -310,7 +315,7 @@ def train(epoch_num):
                 ['task', 'model', 'epochs', 'embedding_dim', 
                 'state_change', 'train_proportion', 'datapath'])
     # need train_proportion <= 0.8
-    args = TrainArgs('mooc', 'jodie', epoch_num, 128, True, 0.8, 'data/mooc.csv')
+    args = TrainArgs('mooc', 'rdp', epoch_num, 128, True, 0.8, 'data/mooc.csv')
 
     # LOAD DATA
     [user2id, user_sequence_id, user_timediffs_sequence, user_previous_itemid_sequence,
@@ -499,7 +504,7 @@ def evaluate_state_change_prediction(epoch_id):
             'train_proportion', 'state_change', 'datapath'])
     # Training sequence proportion cannot be greater than 0.8
     # No state change prediction for lastfm dataset
-    args = EvalArgs('mooc', 'jodie', epoch_id, 128, 0.8, True, 'data/mooc.csv')
+    args = EvalArgs('mooc', 'rdp', epoch_id, 128, 0.8, True, 'data/mooc.csv')
 
     # CHECK IF THE OUTPUT OF THE EPOCH IS ALREADY PROCESSED. IF SO, MOVE ON.
     output_fname = "results/state_change_prediction_%s_%s.txt" % (args.task, args.model)
@@ -592,7 +597,7 @@ def evaluate_state_change_prediction(epoch_id):
     print("*** Making state change predictions by forward pass (no t-batching) ***")
     for j in range(train_end_idx, test_end_idx):
         if j % 10000 == 0:
-            progress_bar.set_description('%dth interaction for validation and testing' % j)
+            print('%dth interaction for validation and testing' % j)
 
         # LOAD INTERACTION J
         userid = user_sequence_id[j]

@@ -20,7 +20,7 @@ from torch import optim
 from torch.autograd import Variable
 from torch.nn import functional as F
 
-dev = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+dev = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
 
 def create_folders(): # done
     commands = '''mkdir -p data/
@@ -305,7 +305,7 @@ def set_embeddings_training_end(user_embeddings, item_embeddings, user_embedding
 
 tbatch_sizes = []
 
-def train(epoch_num):
+def train(epoch_num, from_epoch=-1):
     TrainArgs = namedtuple('TrainArgs',
                 ['task', 'model', 'epochs', 'embedding_dim', 
                 'state_change', 'train_proportion', 'datapath'])
@@ -361,9 +361,12 @@ def train(epoch_num):
     # INITIALIZE MODEL
     optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
 
+    # if from_epoch >= 0:
+        # model, optimizer, user_embeddings_dystat, item_embeddings_dystat, user_embeddings_timeseries, item_embeddings_timeseries, train_end_idx_training = load_model(model, optimizer, args, from_epoch)
+
     # TRAIN MODEL
-    print("*** Training the JODIE model for %d epochs ***" % args.epochs)
-    for ep in range(args.epochs):
+    print("*** Training the %s model from epoch %d  to epoch %d***" % (args.model, from_epoch, args.epochs))
+    for ep in range(from_epoch+1, args.epochs):
 
         # INITIALIZE EMBEDDING TRAJECTORY STORAGE
         user_embeddings_timeseries = Variable(torch.Tensor(num_interactions, args.embedding_dim).to(dev))
@@ -695,57 +698,10 @@ def evaluate_state_change_prediction(epoch_id):
     fw.flush()
     fw.close()
 
-
-def report_performance(fname='results/interaction_prediction_mooc.txt'):
-    validation_performances = []
-    test_performances = []
-    val = []
-    test = []
-    f = open(fname, "r")
-    idx = -1
-    for l in f:
-        if "Validation performance of epoch" in l:
-            if val != []:
-                validation_performances.append(val)
-                test_performances.append(test)
-            idx = int(l.strip().split("epoch ")[1].split()[0])
-            val = [idx]
-            test = [idx]
-            
-        if "Validation:" in l:
-            val.append(float(l.strip().split(": ")[-1]))
-        if "Test:" in l:
-            test.append(float(l.strip().split(": ")[-1]))
-
-    if val != []:
-        validation_performances.append(val)
-        test_performances.append(test)
-
-    validation_performances = np.array(validation_performances)
-    test_performances = np.array(test_performances)
-
-    if "interaction" in fname:
-        metrics = ['Mean Reciprocal Rank', 'Recall@10']
-    else:
-        metrics = ['AUC']
-
-    print('\n\n*** For file: %s ***' % fname)
-    best_val_idx = np.argmax(validation_performances[:,1])
-    print("Best validation epoch: %d" % best_val_idx)
-    print('\n\n*** Best validation performance (epoch %d) ***' % best_val_idx)
-    for i in range(len(metrics)):
-        print(metrics[i] + ': ' + str(validation_performances[best_val_idx][i+1]))
-
-    print('\n\n*** Final model performance on the test set, i.e., in epoch %d ***' % best_val_idx)
-    for i in range(len(metrics)):
-        print(metrics[i] + ': ' + str(test_performances[best_val_idx][i+1]))
-
-
 if __name__ == '__main__':
     create_folders()
     download_datasets()
-    epoch_num = 10
-    train(epoch_num)
+    epoch_num = 50
+    train(epoch_num) # from_epoch=9)
     # for i in range(epoch_num):
     evaluate_state_change_prediction(epoch_num-1)
-    # report_performance()
