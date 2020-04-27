@@ -459,7 +459,7 @@ def train(epoch_num, from_epoch=-1):
                         loss += calculate_state_prediction_loss(model, tbatch_interactionids, user_embeddings_timeseries, y_true, crossEntropyLoss) 
 
                 # BACKPROPAGATE ERROR AFTER END OF T-BATCH
-                print("interaction counted in last tbatched input: " + str(interaction_counter))
+                # print("interaction counted in last tbatched input: " + str(interaction_counter))
 
                 for g in optimizer.param_groups:
                         g['lr'] = g['lr'] * math.sqrt(interaction_counter)
@@ -486,7 +486,7 @@ def train(epoch_num, from_epoch=-1):
 
     # END OF ALL EPOCHS. SAVE FINAL MODEL DISK TO BE USED IN EVALUATION.
     print("\n\n*** Training complete. Saving final model. ***\n\n")
-    save_model(model, optimizer, args, ep, user_embeddings_dystat, item_embeddings_dystat, train_end_idx, user_embeddings_timeseries, item_embeddings_timeseries)
+    save_model(model, optimizer, args, ep, user_embeddings, item_embeddings, train_end_idx, user_embeddings_timeseries, item_embeddings_timeseries)
 
 
 def evaluate_state_change_prediction(epoch_id):
@@ -546,7 +546,7 @@ def evaluate_state_change_prediction(epoch_id):
 
     # INITIALIZE MODEL
     learning_rate = 1e-3
-    optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
+    optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-5)
 
 
     # LOAD THE MODEL
@@ -697,6 +697,6 @@ if __name__ == '__main__':
     create_folders()
     download_datasets()
     epoch_num = 10
-    train(epoch_num) #, from_epoch=9)
+    train(epoch_num, from_epoch=0)
     # for i in range(epoch_num):
     evaluate_state_change_prediction(epoch_num-1)
