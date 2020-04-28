@@ -20,7 +20,7 @@ from torch import optim
 from torch.autograd import Variable
 from torch.nn import functional as F
 
-dev = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+dev = torch.device('cuda:2' if torch.cuda.is_available() else 'cpu')
 
 def create_folders(): # done
     commands = '''mkdir -p data/
@@ -219,9 +219,12 @@ def save_model(model, optimizer, args, epoch, user_embeddings, item_embeddings, 
     print("*** Saved embeddings and model to file: %s ***\n\n" % filename)
 
 
-def load_model(model, optimizer, args, epoch, path="./"):
+def load_model(model, optimizer, args, epoch, path="./", filename=None):
     model_name = args.model
-    filename = path + "saved_models/%s/checkpoint.%s.ep%d.tp%.1f.pth.tar" % (args.task, model_name, epoch, args.train_proportion)
+    if filename is None:
+        filename = path + "saved_models/%s/checkpoint.%s.ep%d.tp%.1f.pth.tar" % (args.task, model_name, epoch, args.train_proportion)
+    else:
+        filename = path + "saved_models/" + str(args.task) + "/" + filename
     checkpoint = torch.load(filename)
     print("Loading saved embeddings and model: %s" % filename)
     user_embeddings = Variable(torch.from_numpy(checkpoint['user_embeddings']).to(dev))
@@ -484,7 +487,7 @@ def train(epoch_num, from_epoch=-1):
     save_model(model, optimizer, args, ep, user_embeddings, item_embeddings, train_end_idx, user_embeddings_timeseries, item_embeddings_timeseries)
 
 
-def evaluate_state_change_prediction(epoch_id):
+def evaluate_state_change_prediction(epoch_id=0, ckpt=None):
     # INITIALIZE PARAMETERS
     EvalArgs = namedtuple("EvalArgs",
             ['task', 'model', 'epoch', 'embedding_dim',
@@ -492,6 +495,11 @@ def evaluate_state_change_prediction(epoch_id):
     # Training sequence proportion cannot be greater than 0.8
     # No state change prediction for lastfm dataset
     args = EvalArgs('mooc', 'jodie', epoch_id, 128, 0.8, True, 'data/mooc.csv')
+
+    if ckpt is not None:
+        words = ckpt.split('.')
+        args = EvalArgs('mooc', words[1], int(words[2][2:]), 128, 0.8, True, 'data/mooc.csv')
+        print('inference testing for ' + ckpt)
 
     # CHECK IF THE OUTPUT OF THE EPOCH IS ALREADY PROCESSED. IF SO, MOVE ON.
     output_fname = "results/state_change_prediction_%s_%s.txt" % (args.task, args.model)
@@ -545,7 +553,10 @@ def evaluate_state_change_prediction(epoch_id):
 
 
     # LOAD THE MODEL
-    model, optimizer, user_embeddings_dystat, item_embeddings_dystat, user_embeddings_timeseries, item_embeddings_timeseries, train_end_idx_training = load_model(model, optimizer, args, args.epoch)
+    if ckpt is None:
+        model, optimizer, user_embeddings_dystat, item_embeddings_dystat, user_embeddings_timeseries, item_embeddings_timeseries, train_end_idx_training = load_model(model, optimizer, args, args.epoch)
+    else:
+        model, optimizer, user_embeddings_dystat, item_embeddings_dystat, user_embeddings_timeseries, item_embeddings_timeseries, train_end_idx_training = load_model(model, optimizer, args, args.epoch, filename=ckpt)
     if train_end_idx != train_end_idx_training:
         sys.exit('Training proportion during training and testing are different. Aborting.')
 
@@ -690,7 +701,32 @@ def evaluate_state_change_prediction(epoch_id):
 if __name__ == '__main__':
     create_folders()
     download_datasets()
-    epoch_num = 10
-    train(epoch_num)
-    # for i in range(epoch_num):
+    epoch_num = 50
+    train(epoch_num) #, from_epoch=9)
+    # # for i in range(epoch_num):
     evaluate_state_change_prediction(epoch_num-1)
+    # to_eval = [
+        # eval.log
+        # 'checkpoint.rdp+tbatch-aware-lr+base1e-4+mul-sqrt-size.ep0.tp0.8.pth.tar.py2',
+        # 'checkpoint.rdp+tbatch-aware-lr+base1e-4+mul-sqrt-size.ep49.tp0.8.pth.tar.py2',
+        # 'checkpoint.rdp+tbatch-aware-lr+base1e-4+mul-sqrt-size.ep9.tp0.8.pth.tar.py2',
+        # 'checkpoint.rdp+tbatch-aware-lr+base3e-3+div-sqrt-size.ep49.tp0.8.pth.tar.py2'
+
+        # eval2.log
+        # 'checkpoint.rdp.ep9.tp0.8.pth.tar.py3',
+        # 'checkpoint.rdp.ep49.tp0.8.pth.tar.py3'
+
+        # eval3.log
+        # 'checkpoint.jodieORrdp.ep10.tp0.8.pth.tar.py3',
+        # 'checkpoint.jodieORrdp.ep1.tp0.8.pth.tar.py3',
+        # 'checkpoint.jodieORrdp.ep9.tp0.8.pth.tar.py3'
+
+        # eval4.log
+        # 'checkpoint.jodie.ep9.tp0.8.pth.tar.py3'
+
+        # eval5.log
+    #     'checkpoint.jodie.ep49.tp0.8.pth.tar.py2'
+    # ]
+
+    # for ckpt_fname in to_eval:
+    #     evaluate_state_change_prediction(ckpt=ckpt_fname)
